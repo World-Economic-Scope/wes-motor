@@ -1,0 +1,59 @@
+name: "WES · clasificar noticias con modelo local"
+
+# Afina la clasificación de noticias de WES con un modelo abierto que corre en esta misma máquina
+# (Ollama). No usa tokens de ninguna API de IA: no se le acaba el saldo. El código vive en el repo
+# privado de WES (se lee con una llave de sólo lectura); este repo es público para usar los minutos
+# gratuitos de GitHub Actions. Las reglas ya clasificaron cada noticia en el repo privado: si este
+# trabajo no corre, el mapa sigue al día con las reglas.
+
+on:
+  schedule:
+    - cron: "37 * * * *"
+  workflow_dispatch:
+    inputs:
+      ref: { description: "rama del código de WES", default: "master" }
+      modelo: { description: "modelo de Ollama", default: "qwen2.5:7b-instruct" }
+      minutos: { description: "tiempo máximo de afinado", default: "45" }
+
+concurrency:
+  group: wes-motor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  afinar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MODELO: ${{ github.event.inputs.modelo || 'qwen2.5:7b-instruct' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: clausvandermolen/ges
+          ref: ${{ github.event.inputs.ref || 'master' }}
+          ssh-key: ${{ secrets.GES_DEPLOY_KEY }}
+          path: wes
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q -r wes/requirements.txt
+      - name: Modelo en caché
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-${{ env.MODELO }}
+      - name: Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh > /dev/null
+          (OLLAMA_NUM_PARALLEL=1 ollama serve > /tmp/ollama.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:11434/api/tags > /dev/null && break; sleep 1; done
+          ollama pull "$MODELO" > /dev/null
+          ollama list
+      - name: Afinar la clasificación
+        working-directory: wes
+        env:
+          GES_DB_URL: ${{ secrets.GES_DB_URL }}
+        run: |
+          python classify/classify_news.py --sin-reglas --motor "local:$MODELO" \
+            --minutos "${{ github.event.inputs.minutos || '45' }}" --lote 8 --max-tokens 6000
