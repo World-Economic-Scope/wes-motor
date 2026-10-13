@@ -1,0 +1,92 @@
+name: "WES · motor de noticias"
+
+# La «máquina virtual» de WES: un proceso de ~5 h 30 que cada 20 min recolecta titulares, los
+# clasifica con reglas (sin red ni costo) y afina lo más grave con un modelo abierto que corre aquí
+# mismo (Ollama). No usa tokens de ninguna API de IA: no se le acaba el saldo.
+#
+# Continuidad: al terminar se relanza a sí mismo (workflow_dispatch con el token del trabajo); el
+# horario de cada hora es sólo el respaldo si la cadena se corta. La concurrencia garantiza que
+# corra uno a la vez.
+#
+# El código vive en el repo privado de WES (llave de sólo lectura); este repo es público para usar
+# los minutos gratuitos de GitHub Actions. Si las noticias se detienen, abre un aviso (llega por
+# correo) y lo cierra solo cuando se recuperan.
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      ref: { description: "rama del código de WES", default: "master" }
+      modelo: { description: "modelo de Ollama (vacío = sólo reglas)", default: "qwen2.5:3b-instruct" }
+      horas: { description: "duración del proceso", default: "5.5" }
+
+concurrency:
+  group: wes-motor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  motor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      MODELO: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.modelo || 'qwen2.5:3b-instruct' }}
+      REF: ${{ github.event.inputs.ref || 'master' }}
+      HORAS: ${{ github.event.inputs.horas || '5.5' }}
+      AVISO: /tmp/aviso.md
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: clausvandermolen/ges
+          ref: ${{ env.REF }}
+          ssh-key: ${{ secrets.GES_DEPLOY_KEY }}
+          path: wes
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q -r wes/requirements.txt
+      - name: Ollama y modelo
+        if: env.MODELO != ''
+        continue-on-error: true
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh > /dev/null
+          sudo systemctl stop ollama 2>/dev/null || true
+          (OLLAMA_NUM_PARALLEL=1 OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_KEEP_ALIVE=6h ollama serve > /tmp/ollama.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:11434/api/tags > /dev/null && break; sleep 1; done
+          ollama pull "$MODELO" > /dev/null && ollama list
+      - name: Motor (recolectar · reglas · modelo local · vigilar)
+        working-directory: wes
+        env:
+          GES_DB_URL: ${{ secrets.GES_DB_URL }}
+        run: |
+          M="$MODELO"; curl -sf http://127.0.0.1:11434/api/tags > /dev/null || M=""
+          python ops/motor_noticias.py --horas "$HORAS" --ciclo 20 --modelo "$M"
+      - name: Relanzar el motor
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run motor.yml -R "$GITHUB_REPOSITORY" -f ref="$REF" -f modelo="$MODELO" -f horas="$HORAS"
+      - name: Avisar si se detuvieron
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CORRIDA="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          [ -f /tmp/aviso.md ] || echo "## El motor de noticias de WES falló" > /tmp/aviso.md
+          echo "" >> /tmp/aviso.md
+          echo "Corrida: $CORRIDA" >> /tmp/aviso.md
+          n=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "Noticias de WES detenidas in:title" --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh issue comment "$n" -R "$GITHUB_REPOSITORY" -F /tmp/aviso.md;
+          else gh issue create -R "$GITHUB_REPOSITORY" -t "Noticias de WES detenidas" -F /tmp/aviso.md -a clausvandermolen; fi
+      - name: Cerrar el aviso cuando se recupera
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for n in $(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "Noticias de WES detenidas in:title" --json number -q '.[].number'); do
+            gh issue close "$n" -R "$GITHUB_REPOSITORY" -c "Recuperado: las noticias vuelven a fluir ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+          done
