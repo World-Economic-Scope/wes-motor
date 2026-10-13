@@ -40,7 +40,8 @@ jobs:
       HORAS: ${{ github.event.inputs.horas || '5.5' }}
       AVISO: /tmp/aviso.md
     steps:
-      - uses: actions/checkout@v4
+      - id: codigo
+        uses: actions/checkout@v4
         with:
           repository: clausvandermolen/ges
           ref: ${{ env.REF }}
@@ -70,7 +71,10 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run motor.yml -R "$GITHUB_REPOSITORY" -f ref="$REF" -f modelo="$MODELO" -f horas="$HORAS"
+        run: |
+          # si la rama pedida ya no existe (p. ej. se fusionó), la cadena vuelve a master
+          R="$REF"; [ "${{ steps.codigo.outcome }}" = "success" ] || R=master
+          gh workflow run motor.yml -R "$GITHUB_REPOSITORY" -f ref="$R" -f modelo="$MODELO" -f horas="$HORAS"
       - name: Avisar si se detuvieron
         if: failure()
         env:
