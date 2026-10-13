@@ -18,7 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       ref: { description: "rama del código de WES", default: "master" }
-      modelo: { description: "modelo de Ollama (vacío = sólo reglas)", default: "qwen2.5:3b-instruct" }
+      # Vacío por defecto: qwen2.5:3b inventó datos en la prueba (Ébola → «fiebre amarilla») y unió
+      # noticias de otros países. Un modelo local vuelve sólo tras pasar el banco de calidad.
+      modelo: { description: "modelo de Ollama (vacío = sólo reglas)", default: "" }
       horas: { description: "duración del proceso", default: "5.5" }
 
 concurrency:
@@ -35,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 355
     env:
-      MODELO: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.modelo || 'qwen2.5:3b-instruct' }}
+      MODELO: ${{ github.event.inputs.modelo || '' }}
       REF: ${{ github.event.inputs.ref || 'master' }}
       HORAS: ${{ github.event.inputs.horas || '5.5' }}
       AVISO: /tmp/aviso.md
