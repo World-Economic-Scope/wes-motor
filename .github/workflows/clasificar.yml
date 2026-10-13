@@ -3,8 +3,9 @@ name: "WES · clasificar noticias con modelo local"
 # Afina la clasificación de noticias de WES con un modelo abierto que corre en esta misma máquina
 # (Ollama). No usa tokens de ninguna API de IA: no se le acaba el saldo. El código vive en el repo
 # privado de WES (se lee con una llave de sólo lectura); este repo es público para usar los minutos
-# gratuitos de GitHub Actions. Las reglas ya clasificaron cada noticia en el repo privado: si este
-# trabajo no corre, el mapa sigue al día con las reglas.
+# gratuitos de GitHub Actions. Tres pasos: (1) reglas, que clasifican TODO sin red ni costo;
+# (2) el modelo local afina lo más grave primero, con tiempo acotado; (3) la vigilancia mide en la
+# base que las noticias sigan llegando y abre un aviso (correo) si se detienen.
 
 on:
   schedule:
@@ -12,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       ref: { description: "rama del código de WES", default: "master" }
-      modelo: { description: "modelo de Ollama", default: "qwen2.5:7b-instruct" }
+      modelo: { description: "modelo de Ollama", default: "qwen2.5:3b-instruct" }
       minutos: { description: "tiempo máximo de afinado", default: "45" }
 
 concurrency:
@@ -21,13 +22,14 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   afinar:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
-      MODELO: ${{ github.event.inputs.modelo || 'qwen2.5:7b-instruct' }}
+      MODELO: ${{ github.event.inputs.modelo || 'qwen2.5:3b-instruct' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,22 +40,58 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -q -r wes/requirements.txt
+      - name: Capa 1 · reglas (sin modelo, nunca se cae)
+        working-directory: wes
+        env:
+          GES_DB_URL: ${{ secrets.GES_DB_URL }}
+        run: python classify/classify_news.py --motor reglas --horas 48
       - name: Modelo en caché
+        continue-on-error: true
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
           key: ollama-${{ env.MODELO }}
       - name: Ollama
+        continue-on-error: true
         run: |
           curl -fsSL https://ollama.com/install.sh | sh > /dev/null
-          (OLLAMA_NUM_PARALLEL=1 ollama serve > /tmp/ollama.log 2>&1 &)
+          (OLLAMA_NUM_PARALLEL=1 OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_KEEP_ALIVE=2h ollama serve > /tmp/ollama.log 2>&1 &)
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:11434/api/tags > /dev/null && break; sleep 1; done
           ollama pull "$MODELO" > /dev/null
           ollama list
-      - name: Afinar la clasificación
+      - name: Capa 2 · afinar con el modelo local
+        continue-on-error: true
         working-directory: wes
         env:
           GES_DB_URL: ${{ secrets.GES_DB_URL }}
         run: |
           python classify/classify_news.py --sin-reglas --motor "local:$MODELO" \
-            --minutos "${{ github.event.inputs.minutos || '45' }}" --lote 8 --max-tokens 6000
+            --minutos "${{ github.event.inputs.minutos || '45' }}" --lote 6 --max-tokens 4000
+      - name: Vigilancia de noticias
+        working-directory: wes
+        env:
+          GES_DB_URL: ${{ secrets.GES_DB_URL }}
+        run: python ops/vigilar_noticias.py --informe /tmp/aviso.md
+      - name: Avisar si se detuvieron
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f /tmp/aviso.md ] || printf '## El trabajo de noticias de WES falló
+
+Ver %s
+' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /tmp/aviso.md
+          printf '
+Corrida: %s
+' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> /tmp/aviso.md
+          n=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "Noticias de WES detenidas in:title" --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh issue comment "$n" -R "$GITHUB_REPOSITORY" -F /tmp/aviso.md;
+          else gh issue create -R "$GITHUB_REPOSITORY" -t "Noticias de WES detenidas" -F /tmp/aviso.md -a clausvandermolen; fi
+      - name: Cerrar el aviso cuando se recupera
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for n in $(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "Noticias de WES detenidas in:title" --json number -q '.[].number'); do
+            gh issue close "$n" -R "$GITHUB_REPOSITORY" -c "Recuperado: las noticias vuelven a fluir ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+          done
