@@ -77,13 +77,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          [ -f /tmp/aviso.md ] || printf '## El trabajo de noticias de WES falló
-
-Ver %s
-' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /tmp/aviso.md
-          printf '
-Corrida: %s
-' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> /tmp/aviso.md
+          CORRIDA="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          [ -f /tmp/aviso.md ] || echo "## El trabajo de noticias de WES falló" > /tmp/aviso.md
+          echo "" >> /tmp/aviso.md
+          echo "Corrida: $CORRIDA" >> /tmp/aviso.md
           n=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "Noticias de WES detenidas in:title" --json number -q '.[0].number')
           if [ -n "$n" ]; then gh issue comment "$n" -R "$GITHUB_REPOSITORY" -F /tmp/aviso.md;
           else gh issue create -R "$GITHUB_REPOSITORY" -t "Noticias de WES detenidas" -F /tmp/aviso.md -a clausvandermolen; fi
