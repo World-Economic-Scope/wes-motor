@@ -51,7 +51,16 @@ jobs:
           path: wes
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install -q -r wes/requirements.txt
+      - run: pip install -q -r wes/requirements.txt psycopg2-binary
+      - name: Cliente de PostgreSQL 17 (respaldo de las tareas programadas)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc > /dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends postgresql-client-17 openssl
       - name: Ollama y modelo
         if: env.MODELO != ''
         continue-on-error: true
@@ -61,10 +70,21 @@ jobs:
           (OLLAMA_NUM_PARALLEL=1 OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_KEEP_ALIVE=6h ollama serve > /tmp/ollama.log 2>&1 &)
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:11434/api/tags > /dev/null && break; sleep 1; done
           ollama pull "$MODELO" > /dev/null && ollama list
-      - name: Motor (recolectar · reglas · modelo local · vigilar)
+      - name: Motor (recolectar · reglas · modelo local · vigilar · tareas programadas)
         working-directory: wes
         env:
           GES_DB_URL: ${{ secrets.GES_DB_URL }}
+          # las tareas programadas (ops/diarias.py) corren dentro del motor: el cron de tareas.yml se atrasa horas
+          BCCH_API_TOKEN: ${{ secrets.BCCH_API_TOKEN }}
+          ERP_DB_URL: ${{ secrets.ERP_DB_URL }}
+          WES_STORAGE_KEY: ${{ secrets.WES_STORAGE_KEY }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
         run: |
           M="$MODELO"; curl -sf http://127.0.0.1:11434/api/tags > /dev/null || M=""
           python ops/motor_noticias.py --horas "$HORAS" --ciclo 20 --modelo "$M"
