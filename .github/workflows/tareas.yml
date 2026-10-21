@@ -1,0 +1,77 @@
+name: "WES · tareas programadas"
+
+# Trabajos diarios y por hora de WES (respaldo, boletín por correo, materias, curvas, cierre de bolsa,
+# calidad, archivo de noticias borradas…). Viven aquí porque este repo es público y sus minutos de
+# GitHub Actions son gratuitos: desde el 2026-10-20 los del repo privado `ges` no corren (límite de pago).
+# Corre cada 30 min; ops/diarias.py decide qué toca según ges.job_run (se pone al día si llega tarde y no
+# repite lo ya hecho). El código y los comandos viven en el repo privado de WES (llave de sólo lectura).
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      ref: { description: "rama del código de WES", default: "master" }
+      tarea: { description: "sólo esta tarea (vacío = todo lo que toque)", default: "" }
+      forzar: { description: "correr aunque no toque (requiere tarea)", type: boolean, default: false }
+
+concurrency:
+  group: wes-tareas
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  tareas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      REF: ${{ github.event.inputs.ref || 'master' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: clausvandermolen/ges
+          ref: ${{ env.REF }}
+          ssh-key: ${{ secrets.GES_DEPLOY_KEY }}
+          path: wes
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q -r wes/requirements.txt psycopg2-binary
+      - name: Cliente de PostgreSQL 17 (respaldo)
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc > /dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends postgresql-client-17 openssl
+      - name: Tareas que tocan
+        working-directory: wes
+        env:
+          GES_DB_URL: ${{ secrets.GES_DB_URL }}
+          BCCH_API_TOKEN: ${{ secrets.BCCH_API_TOKEN }}
+          ERP_DB_URL: ${{ secrets.ERP_DB_URL }}
+          WES_STORAGE_KEY: ${{ secrets.WES_STORAGE_KEY }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+        run: |
+          ARGS=""
+          [ -n "${{ github.event.inputs.tarea }}" ] && ARGS="--tarea ${{ github.event.inputs.tarea }}"
+          [ "${{ github.event.inputs.forzar }}" = "true" ] && ARGS="$ARGS --forzar"
+          python ops/diarias.py $ARGS
+      - name: Avisar si una tarea falló
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CORRIDA="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          n=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "Tareas de WES con fallas in:title" --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh issue comment "$n" -R "$GITHUB_REPOSITORY" -b "Falla otra vez: $CORRIDA";
+          else gh issue create -R "$GITHUB_REPOSITORY" -t "Tareas de WES con fallas" -b "Corrida: $CORRIDA" -a clausvandermolen; fi
