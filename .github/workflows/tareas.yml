@@ -3,7 +3,9 @@ name: "WES · tareas programadas"
 # Trabajos diarios y por hora de WES (respaldo, boletín por correo, materias, curvas, cierre de bolsa,
 # calidad, archivo de noticias borradas…). Viven aquí porque este repo es público y sus minutos de
 # GitHub Actions son gratuitos: desde el 2026-10-20 los del repo privado `ges` no corren (límite de pago).
-# Corre cada 30 min; ops/diarias.py decide qué toca según ges.job_run (se pone al día si llega tarde y no
+# Corre cada 30 min como RESPALDO: desde el 2026-10-21 el motor continuo (motor.yml) lanza ops/diarias.py
+# en cada ciclo, porque este cron de GitHub se atrasaba horas. Un candado en Postgres impide que corran
+# dos a la vez; ops/diarias.py decide qué toca según ges.job_run (se pone al día si llega tarde y no
 # repite lo ya hecho). El código y los comandos viven en el repo privado de WES (llave de sólo lectura).
 
 on:
