@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: clausvandermolen/ges
+          repository: World-Economic-Scope/ges
           ref: ${{ env.REF }}
           ssh-key: ${{ secrets.GES_DEPLOY_KEY }}
           path: wes
