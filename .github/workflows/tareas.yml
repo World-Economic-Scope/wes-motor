@@ -55,6 +55,7 @@ jobs:
           GES_DB_URL: ${{ secrets.GES_DB_URL }}
           BCCH_API_TOKEN: ${{ secrets.BCCH_API_TOKEN }}
           ERP_DB_URL: ${{ secrets.ERP_DB_URL }}
+          ERP_CRON_SECRET: ${{ secrets.ERP_CRON_SECRET }}
           WES_STORAGE_KEY: ${{ secrets.WES_STORAGE_KEY }}
           GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
           GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
