@@ -67,6 +67,7 @@ jobs:
           GSC_CLIENT_ID: ${{ secrets.GSC_CLIENT_ID }}
           GSC_CLIENT_SECRET: ${{ secrets.GSC_CLIENT_SECRET }}
           GSC_REFRESH_TOKEN: ${{ secrets.GSC_REFRESH_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           ARGS=""
           [ -n "${{ github.event.inputs.tarea }}" ] && ARGS="--tarea ${{ github.event.inputs.tarea }}"
