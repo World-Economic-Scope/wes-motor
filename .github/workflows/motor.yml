@@ -89,6 +89,8 @@ jobs:
           GSC_CLIENT_ID: ${{ secrets.GSC_CLIENT_ID }}
           GSC_CLIENT_SECRET: ${{ secrets.GSC_CLIENT_SECRET }}
           GSC_REFRESH_TOKEN: ${{ secrets.GSC_REFRESH_TOKEN }}
+          # cuentas_erp (espejo del Auth de WES en el ERP) también corre dentro del motor
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           M="$MODELO"; curl -sf http://127.0.0.1:11434/api/tags > /dev/null || M=""
           python ops/motor_noticias.py --horas "$HORAS" --ciclo 20 --modelo "$M"
